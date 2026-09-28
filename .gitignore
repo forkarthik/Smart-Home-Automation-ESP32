@@ -1,0 +1,14 @@
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Environment & Sensitive Credentials
+backend/.env
+firmware/esp32_home_control/config.h
+backend/device_state.json
+
+# Operating System
+.DS_Store
+Thumbs.db

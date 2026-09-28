@@ -1,0 +1,19 @@
+{
+  "name": "esp32-home-automation-backend",
+  "version": "1.0.0",
+  "description": "Production IoT Backend for ESP32 Smart Home Automation with ThingsBoard",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js",
+    "simulate": "node simulator.js"
+  },
+  "dependencies": {
+    "axios": "^1.7.9",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "mqtt": "^5.10.3",
+    "ws": "^8.18.0"
+  }
+}

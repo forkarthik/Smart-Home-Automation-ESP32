@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Smart Home Automation — ESP32 IoT Control Dashboard</title>
+  <meta name="description" content="Production-ready Smart Home Automation dashboard for ESP32 hardware appliance control powered by ThingsBoard IoT engine.">
+  
+  <!-- Modern Typography from Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- Ambient background glow layers -->
+  <div class="ambient-glow glow-1"></div>
+  <div class="ambient-glow glow-2"></div>
+  <div class="ambient-glow glow-3"></div>
+
+  <div class="app-container">
+    <!-- Header Section -->
+    <header class="dashboard-header">
+      <div class="brand-section">
+        <div class="brand-icon-wrapper">
+          <svg class="brand-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path>
+            <polyline points="9 22 9 12 15 12 15 22"></polyline>
+          </svg>
+          <div class="brand-pulse"></div>
+        </div>
+        <div class="brand-text">
+          <div class="brand-title-row">
+            <h1>My Smart Home</h1>
+            <span class="version-tag">ESP32 IoT v1.0</span>
+          </div>
+          <p class="brand-subtitle">Real-Time Hardware Controller • ThingsBoard Engine</p>
+        </div>
+      </div>
+
+      <div class="header-status-panel">
+        <!-- ESP32 Hardware Status -->
+        <div class="status-pill" id="esp32-status-pill">
+          <span class="status-dot online"></span>
+          <span class="status-label" id="esp32-status-text">ESP32 ONLINE</span>
+        </div>
+
+        <!-- ThingsBoard Cloud Link Status -->
+        <div class="status-pill cloud-pill" id="cloud-status-pill" title="ThingsBoard Broker: demo.thingsboard.io">
+          <svg class="cloud-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"></path>
+          </svg>
+          <span class="cloud-label">ThingsBoard Cloud</span>
+        </div>
+
+        <!-- Sync Indicator -->
+        <div class="sync-indicator" id="sync-indicator" title="Click to manually refresh states">
+          <svg class="refresh-icon" id="refresh-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <polyline points="23 4 23 10 17 10"></polyline>
+            <polyline points="1 20 1 14 7 14"></polyline>
+            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+          </svg>
+          <span class="sync-text" id="sync-text">Synced</span>
+        </div>
+
+        <!-- Quick Settings & Simulator Toggle -->
+        <button class="icon-button" id="btn-toggle-sim" title="Toggle Hardware Simulation Mode" aria-label="Toggle Simulation">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
+            <line x1="8" y1="21" x2="16" y2="21"></line>
+            <line x1="12" y1="17" x2="12" y2="21"></line>
+          </svg>
+          <span class="sim-badge" id="sim-badge">MOCK OFF</span>
+        </button>
+
+        <button class="icon-button" id="btn-toggle-logs" title="Toggle System Audit Logs" aria-label="Toggle Logs">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+            <polyline points="14 2 14 8 20 8"></polyline>
+            <line x1="16" y1="13" x2="8" y2="13"></line>
+            <line x1="16" y1="17" x2="8" y2="17"></line>
+            <polyline points="10 9 9 9 8 9"></polyline>
+          </svg>
+        </button>
+      </div>
+    </header>
+
+    <!-- Dashboard Summary Bar -->
+    <section class="summary-section" aria-label="Dashboard Metrics Summary">
+      <div class="summary-card">
+        <div class="summary-label">Total Appliances</div>
+        <div class="summary-value" id="metric-total">4</div>
+        <div class="summary-sub">Hardware GPIO Outputs</div>
+      </div>
+
+      <div class="summary-card active-card">
+        <div class="summary-label">Active (ON)</div>
+        <div class="summary-value highlight-cyan" id="metric-active">0</div>
+        <div class="summary-sub" id="metric-active-sub">All appliances OFF</div>
+      </div>
+
+      <div class="summary-card">
+        <div class="summary-label">Standby (OFF)</div>
+        <div class="summary-value" id="metric-inactive">4</div>
+        <div class="summary-sub">Relays open / 0V</div>
+      </div>
+
+      <div class="summary-card">
+        <div class="summary-label">System Uptime</div>
+        <div class="summary-value" id="metric-uptime">0m</div>
+        <div class="summary-sub" id="metric-last-comm">Ready for commands</div>
+      </div>
+    </section>
+
+    <!-- Device Details & Telemetry Strip -->
+    <div class="device-info-strip">
+      <div class="info-tag">
+        <span class="info-label">Device:</span>
+        <span class="info-val">ESP32 DevKit V1</span>
+      </div>
+      <div class="info-tag">
+        <span class="info-label">ThingsBoard ID:</span>
+        <span class="info-val font-mono" id="val-device-id">1ef3c9f0-bb2a-11f1-9681-6110e8f55c0f</span>
+      </div>
+      <div class="info-tag">
+        <span class="info-label">Broker:</span>
+        <span class="info-val font-mono">demo.thingsboard.io:1883</span>
+      </div>
+      <div class="info-tag">
+        <span class="info-label">Wi-Fi RSSI:</span>
+        <span class="info-val font-mono" id="val-rssi">-58 dBm (Strong)</span>
+      </div>
+    </div>
+
+    <!-- Main Appliances Grid (2x2 Desktop, 1 Column Mobile) -->
+    <main class="appliances-grid" aria-label="Appliances Control Panel">
+      
+      <!-- Card 1: Light 1 (GPIO 16) -->
+      <article class="appliance-card" id="card-light1" data-appliance="light1">
+        <div class="card-glow"></div>
+        <div class="card-header">
+          <div class="appliance-icon-box light-icon-box">
+            <svg class="appliance-svg bulb-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M9 18h6"></path>
+              <path d="M10 22h4"></path>
+              <path d="M15.09 14c.18-.98.65-1.74 1.41-2.5A4.65 4.65 0 0 0 18 8 6 6 0 0 0 6 8c0 1 .23 2.23 1.5 3.5A4.61 4.61 0 0 1 8.91 14"></path>
+            </svg>
+            <div class="light-radiance"></div>
+          </div>
+          <div class="appliance-meta">
+            <span class="gpio-badge">GPIO 16</span>
+            <span class="output-level-badge" id="level-light1">LOW (0V)</span>
+          </div>
+        </div>
+
+        <div class="card-body">
+          <h2 class="appliance-name">Light 1</h2>
+          <p class="appliance-room">Living Room Ceiling</p>
+        </div>
+
+        <div class="card-footer">
+          <div class="status-indicator-box">
+            <span class="status-label-text" id="status-text-light1">OFF</span>
+            <span class="sync-state-pill" id="sync-pill-light1">Hardware Verified</span>
+          </div>
+
+          <div class="switch-wrapper">
+            <button class="smart-toggle" id="toggle-light1" role="switch" aria-checked="false" aria-label="Toggle Light 1">
+              <span class="toggle-slider">
+                <span class="spinner" id="spinner-light1"></span>
+              </span>
+            </button>
+          </div>
+        </div>
+      </article>
+
+      <!-- Card 2: Light 2 (GPIO 17) -->
+      <article class="appliance-card" id="card-light2" data-appliance="light2">
+        <div class="card-glow"></div>
+        <div class="card-header">
+          <div class="appliance-icon-box light-icon-box">
+            <svg class="appliance-svg bulb-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M9 18h6"></path>
+              <path d="M10 22h4"></path>
+              <path d="M15.09 14c.18-.98.65-1.74 1.41-2.5A4.65 4.65 0 0 0 18 8 6 6 0 0 0 6 8c0 1 .23 2.23 1.5 3.5A4.61 4.61 0 0 1 8.91 14"></path>
+            </svg>
+            <div class="light-radiance"></div>
+          </div>
+          <div class="appliance-meta">
+            <span class="gpio-badge">GPIO 17</span>
+            <span class="output-level-badge" id="level-light2">LOW (0V)</span>
+          </div>
+        </div>
+
+        <div class="card-body">
+          <h2 class="appliance-name">Light 2</h2>
+          <p class="appliance-room">Master Bedroom Ambient</p>
+        </div>
+
+        <div class="card-footer">
+          <div class="status-indicator-box">
+            <span class="status-label-text" id="status-text-light2">OFF</span>
+            <span class="sync-state-pill" id="sync-pill-light2">Hardware Verified</span>
+          </div>
+
+          <div class="switch-wrapper">
+            <button class="smart-toggle" id="toggle-light2" role="switch" aria-checked="false" aria-label="Toggle Light 2">
+              <span class="toggle-slider">
+                <span class="spinner" id="spinner-light2"></span>
+              </span>
+            </button>
+          </div>
+        </div>
+      </article>
+
+      <!-- Card 3: Fan 1 (GPIO 18) -->
+      <article class="appliance-card" id="card-fan1" data-appliance="fan1">
+        <div class="card-glow"></div>
+        <div class="card-header">
+          <div class="appliance-icon-box fan-icon-box">
+            <svg class="appliance-svg fan-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="3"></circle>
+              <path d="M12 9V2a3 3 0 0 1 3 3v4"></path>
+              <path d="M15 12h7a3 3 0 0 1-3 3h-4"></path>
+              <path d="M12 15v7a3 3 0 0 1-3-3v-4"></path>
+              <path d="M9 12H2a3 3 0 0 1 3-3h4"></path>
+            </svg>
+          </div>
+          <div class="appliance-meta">
+            <span class="gpio-badge">GPIO 18</span>
+            <span class="output-level-badge" id="level-fan1">LOW (0V)</span>
+          </div>
+        </div>
+
+        <div class="card-body">
+          <h2 class="appliance-name">Fan 1</h2>
+          <p class="appliance-room">Living Room Ceiling Fan</p>
+        </div>
+
+        <div class="card-footer">
+          <div class="status-indicator-box">
+            <span class="status-label-text" id="status-text-fan1">OFF</span>
+            <span class="sync-state-pill" id="sync-pill-fan1">Hardware Verified</span>
+          </div>
+
+          <div class="switch-wrapper">
+            <button class="smart-toggle" id="toggle-fan1" role="switch" aria-checked="false" aria-label="Toggle Fan 1">
+              <span class="toggle-slider">
+                <span class="spinner" id="spinner-fan1"></span>
+              </span>
+            </button>
+          </div>
+        </div>
+      </article>
+
+      <!-- Card 4: Fan 2 (GPIO 19) -->
+      <article class="appliance-card" id="card-fan2" data-appliance="fan2">
+        <div class="card-glow"></div>
+        <div class="card-header">
+          <div class="appliance-icon-box fan-icon-box">
+            <svg class="appliance-svg fan-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="3"></circle>
+              <path d="M12 9V2a3 3 0 0 1 3 3v4"></path>
+              <path d="M15 12h7a3 3 0 0 1-3 3h-4"></path>
+              <path d="M12 15v7a3 3 0 0 1-3-3v-4"></path>
+              <path d="M9 12H2a3 3 0 0 1 3-3h4"></path>
+            </svg>
+          </div>
+          <div class="appliance-meta">
+            <span class="gpio-badge">GPIO 19</span>
+            <span class="output-level-badge" id="level-fan2">LOW (0V)</span>
+          </div>
+        </div>
+
+        <div class="card-body">
+          <h2 class="appliance-name">Fan 2</h2>
+          <p class="appliance-room">Bedroom Exhaust / Ventilation</p>
+        </div>
+
+        <div class="card-footer">
+          <div class="status-indicator-box">
+            <span class="status-label-text" id="status-text-fan2">OFF</span>
+            <span class="sync-state-pill" id="sync-pill-fan2">Hardware Verified</span>
+          </div>
+
+          <div class="switch-wrapper">
+            <button class="smart-toggle" id="toggle-fan2" role="switch" aria-checked="false" aria-label="Toggle Fan 2">
+              <span class="toggle-slider">
+                <span class="spinner" id="spinner-fan2"></span>
+              </span>
+            </button>
+          </div>
+        </div>
+      </article>
+
+    </main>
+
+    <!-- Real-time Activity / Audit Log Drawer -->
+    <section class="audit-log-section" id="audit-log-panel">
+      <div class="audit-header">
+        <div class="audit-title-box">
+          <span class="terminal-dot"></span>
+          <h3>Hardware & Network Audit Trail</h3>
+          <span class="log-count-pill" id="log-count">0 events</span>
+        </div>
+        <button class="clear-logs-btn" id="btn-clear-logs">Clear View</button>
+      </div>
+
+      <div class="audit-log-container" id="audit-log-container">
+        <div class="audit-empty-state">No control commands recorded yet. Toggle a switch to view real-time latency and hardware confirmation logs.</div>
+      </div>
+    </section>
+
+    <!-- Footer Notice -->
+    <footer class="dashboard-footer">
+      <div class="footer-content">
+        <p>ESP32 IoT Home Automation • Connected to ThingsBoard MQTT Cloud Broker • Logic Levels: ON = 3.3V (HIGH), OFF = 0V (LOW)</p>
+      </div>
+    </footer>
+  </div>
+
+  <!-- Toast Notification Container -->
+  <div class="toast-container" id="toast-container"></div>
+
+  <!-- Client Script -->
+  <script src="app.js"></script>
+</body>
+</html>
