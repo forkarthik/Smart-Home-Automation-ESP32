@@ -1,19 +1,20 @@
 /**
  * ============================================================================
- * ESP32 SMART HOME AUTOMATION — THINGSBOARD IoT FIRMWARE
+ * ESP32 SMART HOME AUTOMATION — ALL-IN-ONE THINGSBOARD IoT FIRMWARE
  * ============================================================================
- * Controller: ESP32 Development Board (30-pin / 38-pin DevKit V1)
+ * Hardware: ESP32 Development Board (DOIT ESP32 DevKit V1 / 30-pin / 38-pin)
  * IoT Platform: ThingsBoard Cloud (demo.thingsboard.io)
  *
- * Hardware Pin Mapping:
+ * Controlled Appliances & GPIO Pinout:
  *   - Light 1 : GPIO 16 (HIGH = ON / 3.3V, LOW = OFF / 0V)
  *   - Light 2 : GPIO 17 (HIGH = ON / 3.3V, LOW = OFF / 0V)
  *   - Fan 1   : GPIO 18 (HIGH = ON / 3.3V, LOW = OFF / 0V)
  *   - Fan 2   : GPIO 19 (HIGH = ON / 3.3V, LOW = OFF / 0V)
+ *   - Status  : GPIO 2  (Built-in Blue LED indicator)
  *
- * Dependencies (install via Arduino IDE Library Manager):
- *   - "PubSubClient" by Nick O'Leary
- *   - "ArduinoJson" by Benoit Blanchon (Supports both v6 and v7)
+ * Required Libraries (Install via Arduino IDE Library Manager):
+ *   1. "PubSubClient" by Nick O'Leary
+ *   2. "ArduinoJson" by Benoit Blanchon (Supports v6 and v7)
  * ============================================================================
  */
 
@@ -21,17 +22,50 @@
 #include <WiFiClient.h>
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
-#include "config.h"
 
 // ============================================================================
-// Network Clients
+// 1. NETWORK & THINGSBOARD CREDENTIALS (Pre-Configured)
+// ============================================================================
+const char* WIFI_SSID       = "forkarthik";
+const char* WIFI_PASSWORD   = "72728484";
+
+const char* TB_SERVER       = "demo.thingsboard.io";
+const int   TB_PORT         = 1883;
+const char* TB_ACCESS_TOKEN = "jk4sujsj9vbbziz4d8al";
+const char* TB_DEVICE_ID    = "1ef3c9f0-bb2a-11f1-9681-6110e8f55c0f";
+const char* MQTT_CLIENT_ID  = "ESP32_SmartHome_1ef3c9f0";
+
+// ============================================================================
+// 2. HARDWARE GPIO PIN CONFIGURATION
+// ============================================================================
+#define PIN_LIGHT_1         16   // GPIO 16 -> Light 1
+#define PIN_LIGHT_2         17   // GPIO 17 -> Light 2
+#define PIN_FAN_1           18   // GPIO 18 -> Fan 1
+#define PIN_FAN_2           19   // GPIO 19 -> Fan 2
+#define PIN_STATUS_LED      2    // GPIO 2  -> ESP32 On-board Blue LED
+
+// Relay Logic Level (Active-HIGH: HIGH = 3.3V = ON, LOW = 0V = OFF)
+#define RELAY_ON            HIGH
+#define RELAY_OFF           LOW
+
+// ThingsBoard MQTT Topics
+#define TB_TELEMETRY_TOPIC      "v1/devices/me/telemetry"
+#define TB_ATTRIBUTES_TOPIC     "v1/devices/me/attributes"
+#define TB_RPC_SUBSCRIBE        "v1/devices/me/rpc/request/+"
+#define TB_RPC_RESPONSE_BASE    "v1/devices/me/rpc/response/"
+#define TB_ATTRIBUTES_UPDATE    "v1/devices/me/attributes"
+
+// Timing Constants
+const unsigned long TELEMETRY_INTERVAL_MS  = 15000; // 15 seconds
+const unsigned long WIFI_RETRY_INTERVAL_MS = 5000;  // 5 seconds
+const unsigned long MQTT_RETRY_INTERVAL_MS = 5000;  // 5 seconds
+
+// ============================================================================
+// Network & Appliance State Structures
 // ============================================================================
 WiFiClient espClient;
 PubSubClient client(espClient);
 
-// ============================================================================
-// Appliance Hardware Definitions
-// ============================================================================
 struct Appliance {
   const char* name;
   uint8_t gpio;
@@ -45,14 +79,13 @@ Appliance appliances[4] = {
   { "fan2",   PIN_FAN_2,   false }
 };
 
-// Timing and Metrics
 unsigned long lastTelemetryTime = 0;
 unsigned long lastMqttRetryTime = 0;
 unsigned long lastWifiCheckTime = 0;
 unsigned long totalCommandsProcessed = 0;
 
 // ============================================================================
-// Forward Declarations
+// Forward Function Declarations
 // ============================================================================
 void initHardwarePins();
 void setupWiFi();
@@ -68,23 +101,24 @@ void publishTelemetry();
 int findApplianceIndex(const char* name);
 
 // ============================================================================
-// Safe Hardware Initialization (MANDATORY SAFE BOOT: All pins LOW / 0V)
+// Safe Hardware Pin Setup (MANDATORY SAFE BOOT: All pins LOW / 0V)
 // ============================================================================
 void initHardwarePins() {
-  Serial.println("\n[HARDWARE] Initializing GPIO pins...");
+  Serial.println("\n[HARDWARE] Initializing GPIO outputs...");
+  
+  pinMode(PIN_STATUS_LED, OUTPUT);
+  digitalWrite(PIN_STATUS_LED, LOW);
+
   for (int i = 0; i < 4; i++) {
     pinMode(appliances[i].gpio, OUTPUT);
     digitalWrite(appliances[i].gpio, RELAY_OFF);
     appliances[i].state = false;
 
-    int actualLevel = digitalRead(appliances[i].gpio);
-    Serial.printf("[HARDWARE] %s (GPIO %d) -> Boot State: %s (Readback: %d)\n",
-                  appliances[i].name,
-                  appliances[i].gpio,
-                  (RELAY_OFF == LOW ? "LOW (0V / SAFE OFF)" : "HIGH"),
-                  actualLevel);
+    int actualReading = digitalRead(appliances[i].gpio);
+    Serial.printf("[HARDWARE] %s (GPIO %d) -> Output: LOW (0V / SAFE OFF) [Readback: %d]\n",
+                  appliances[i].name, appliances[i].gpio, actualReading);
   }
-  Serial.println("[HARDWARE] Safe boot verified: All relays are de-energized.");
+  Serial.println("[HARDWARE] Safe boot verified: All relays are OFF.");
 }
 
 // ============================================================================
@@ -101,23 +135,27 @@ void setupWiFi() {
   unsigned long startAttempt = millis();
   while (WiFi.status() != WL_CONNECTED && millis() - startAttempt < 15000) {
     delay(400);
+    digitalWrite(PIN_STATUS_LED, !digitalRead(PIN_STATUS_LED)); // Blink while connecting
     Serial.print(".");
   }
 
   if (WiFi.status() == WL_CONNECTED) {
+    digitalWrite(PIN_STATUS_LED, HIGH); // Solid ON when connected
     Serial.println("\n[WIFI] Connected successfully!");
-    Serial.printf("[WIFI] Assigned IP Address: %s\n", WiFi.localIP().toString().c_str());
-    Serial.printf("[WIFI] Signal Strength (RSSI): %d dBm\n", WiFi.RSSI());
+    Serial.printf("[WIFI] IP Address:  %s\n", WiFi.localIP().toString().c_str());
+    Serial.printf("[WIFI] Signal RSSI: %d dBm\n", WiFi.RSSI());
   } else {
-    Serial.println("\n[WIFI] Initial connection attempt timed out. Reconnection loop active.");
+    digitalWrite(PIN_STATUS_LED, LOW);
+    Serial.println("\n[WIFI] Connection pending. Background reconnection active.");
   }
 }
 
 void checkWiFi() {
   if (WiFi.status() != WL_CONNECTED) {
+    digitalWrite(PIN_STATUS_LED, LOW);
     if (millis() - lastWifiCheckTime > WIFI_RETRY_INTERVAL_MS) {
       lastWifiCheckTime = millis();
-      Serial.println("[WIFI] Disconnected. Re-attempting non-blocking Wi-Fi connect...");
+      Serial.println("[WIFI] Disconnected. Re-attempting Wi-Fi connect...");
       WiFi.disconnect();
       WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
     }
@@ -134,11 +172,12 @@ void reconnectThingsBoard() {
   if (millis() - lastMqttRetryTime < MQTT_RETRY_INTERVAL_MS) return;
   lastMqttRetryTime = millis();
 
-  Serial.printf("[THINGSBOARD] Connecting to %s:%d using Device Access Token...\n", TB_SERVER, TB_PORT);
+  Serial.printf("[THINGSBOARD] Connecting to %s:%d ...\n", TB_SERVER, TB_PORT);
 
-  // In ThingsBoard, Device Access Token is passed as MQTT Username (password NULL)
+  // In ThingsBoard, Access Token is passed as MQTT Username (password NULL)
   if (client.connect(MQTT_CLIENT_ID, TB_ACCESS_TOKEN, NULL)) {
-    Serial.println("[THINGSBOARD] Successfully connected to ThingsBoard MQTT Broker!");
+    Serial.println("[THINGSBOARD] Connected successfully to ThingsBoard MQTT Broker!");
+    digitalWrite(PIN_STATUS_LED, HIGH);
 
     // Subscribe to Two-Way RPC requests
     client.subscribe(TB_RPC_SUBSCRIBE);
@@ -148,12 +187,12 @@ void reconnectThingsBoard() {
     client.subscribe(TB_ATTRIBUTES_UPDATE);
     Serial.printf("[THINGSBOARD] Subscribed to Attributes: %s\n", TB_ATTRIBUTES_UPDATE);
 
-    // Send full state synchronization
+    // Synchronize initial hardware states
     publishAttributes();
     publishTelemetry();
   } else {
     Serial.printf("[THINGSBOARD] Connection failed, rc=%d. Retrying in %d ms...\n",
-                  client.state(), MQTT_RETRY_INTERVAL_MS);
+                  client.state(), (int)MQTT_RETRY_INTERVAL_MS);
   }
 }
 
@@ -162,7 +201,7 @@ void reconnectThingsBoard() {
 // ============================================================================
 void onMqttMessage(char* topic, byte* payload, unsigned int length) {
   if (length >= 512) {
-    Serial.println("[MQTT] Payload exceeds 512 byte buffer limit!");
+    Serial.println("[MQTT] Payload exceeds buffer limit!");
     return;
   }
 
@@ -173,18 +212,18 @@ void onMqttMessage(char* topic, byte* payload, unsigned int length) {
   String topicStr = String(topic);
   Serial.printf("\n[THINGSBOARD INBOUND] Topic: %s\nPayload: %s\n", topic, message);
 
-  // Handle Two-Way RPC Requests (v1/devices/me/rpc/request/{requestId})
+  // Two-Way RPC requests: v1/devices/me/rpc/request/{requestId}
   if (topicStr.startsWith("v1/devices/me/rpc/request/")) {
     handleRpcRequest(topicStr, message);
   }
-  // Handle Shared Attribute Updates (v1/devices/me/attributes)
+  // Shared Attributes updates: v1/devices/me/attributes
   else if (topicStr.equals(TB_ATTRIBUTES_UPDATE)) {
     handleAttributesUpdate(message);
   }
 }
 
 // ============================================================================
-// ThingsBoard Two-Way RPC Handler
+// ThingsBoard Two-Way RPC Request Handler
 // ============================================================================
 void handleRpcRequest(String topic, const char* jsonPayload) {
   int lastSlash = topic.lastIndexOf('/');
@@ -198,19 +237,18 @@ void handleRpcRequest(String topic, const char* jsonPayload) {
 
   DeserializationError error = deserializeJson(doc, jsonPayload);
   if (error) {
-    Serial.printf("[RPC ERROR] JSON parse failure: %s\n", error.c_str());
+    Serial.printf("[RPC ERROR] JSON parse failed: %s\n", error.c_str());
     return;
   }
 
   const char* method = doc["method"];
   if (!method) {
-    Serial.println("[RPC ERROR] Missing 'method' in RPC payload.");
+    Serial.println("[RPC ERROR] Missing 'method' field.");
     return;
   }
 
-  Serial.printf("[RPC] Received method: %s | RequestId: %s\n", method, requestId.c_str());
+  Serial.printf("[RPC] Method: %s | RequestId: %s\n", method, requestId.c_str());
 
-  // Method 1: Direct appliance commands
   if (strcasecmp(method, "setLight1") == 0) {
     bool state = doc["params"].as<bool>();
     setApplianceState(0, state, requestId.c_str());
@@ -227,7 +265,6 @@ void handleRpcRequest(String topic, const char* jsonPayload) {
     bool state = doc["params"].as<bool>();
     setApplianceState(3, state, requestId.c_str());
   }
-  // Method 2: Generic appliance method: { appliance: "light1", state: true }
   else if (strcasecmp(method, "setAppliance") == 0) {
     const char* appName = doc["params"]["appliance"];
     bool state = doc["params"]["state"].as<bool>();
@@ -236,7 +273,6 @@ void handleRpcRequest(String topic, const char* jsonPayload) {
       setApplianceState(idx, state, requestId.c_str());
     }
   }
-  // Method 3: Pin-based method: { pin: 16, state: true }
   else if (strcasecmp(method, "setGpio") == 0 || strcasecmp(method, "setValue") == 0) {
     int pin = doc["params"]["pin"].as<int>();
     bool state = doc["params"]["state"].as<bool>();
@@ -247,7 +283,6 @@ void handleRpcRequest(String topic, const char* jsonPayload) {
       }
     }
   }
-  // Method 4: Query full status
   else if (strcasecmp(method, "getStatus") == 0 || strcasecmp(method, "getValue") == 0) {
 #if ARDUINOJSON_VERSION_MAJOR >= 7
     JsonDocument resDoc;
@@ -267,7 +302,7 @@ void handleRpcRequest(String topic, const char* jsonPayload) {
 }
 
 // ============================================================================
-// ThingsBoard Shared Attributes Processing
+// ThingsBoard Shared Attributes Handler
 // ============================================================================
 void handleAttributesUpdate(const char* jsonPayload) {
 #if ARDUINOJSON_VERSION_MAJOR >= 7
@@ -287,7 +322,7 @@ void handleAttributesUpdate(const char* jsonPayload) {
 }
 
 // ============================================================================
-// Appliance Controller & Real Hardware Readback Confirmation
+// Appliance Controller & Hardware Voltage Readback Confirmation
 // ============================================================================
 bool setApplianceState(int index, bool targetState, const char* requestId) {
   if (index < 0 || index >= 4) return false;
@@ -295,28 +330,28 @@ bool setApplianceState(int index, bool targetState, const char* requestId) {
   uint8_t gpio = appliances[index].gpio;
   uint8_t outputLevel = targetState ? RELAY_ON : RELAY_OFF;
 
-  // 1. Set Hardware Pin
+  // 1. Drive output signal to GPIO
   digitalWrite(gpio, outputLevel);
 
-  // 2. Read back actual hardware pin voltage level
+  // 2. Strict Hardware Verification: Read back actual voltage from GPIO pin
   int actualLevel = digitalRead(gpio);
   bool confirmedState = (actualLevel == RELAY_ON);
   appliances[index].state = confirmedState;
 
   totalCommandsProcessed++;
 
-  Serial.printf("[HARDWARE CONFIRMED] %s (GPIO %d) -> %s (Voltage Level: %s)\n",
+  Serial.printf("[HARDWARE CONFIRMED] %s (GPIO %d) -> %s (Output: %s)\n",
                 appliances[index].name,
                 gpio,
                 (confirmedState ? "ON (HIGH)" : "OFF (LOW)"),
                 (actualLevel == HIGH ? "3.3V" : "0V"));
 
-  // 3. Send Two-Way RPC Response
+  // 3. Send Two-Way RPC Response if requested
   if (requestId != NULL && strlen(requestId) > 0) {
     sendRpcResponse(requestId, index, true);
   }
 
-  // 4. Synchronize ThingsBoard Client Attributes and Telemetry
+  // 4. Update ThingsBoard Attributes & Telemetry
   publishAttributes();
   publishTelemetry();
 
@@ -324,7 +359,7 @@ bool setApplianceState(int index, bool targetState, const char* requestId) {
 }
 
 // ============================================================================
-// Send Two-Way RPC Response to ThingsBoard
+// Send Two-Way RPC Response
 // ============================================================================
 void sendRpcResponse(const char* requestId, int index, bool success) {
 #if ARDUINOJSON_VERSION_MAJOR >= 7
@@ -345,7 +380,7 @@ void sendRpcResponse(const char* requestId, int index, bool success) {
 
   String responseTopic = String(TB_RPC_RESPONSE_BASE) + requestId;
   client.publish(responseTopic.c_str(), buffer);
-  Serial.printf("[THINGSBOARD RPC RESP] Topic: %s | Payload: %s\n", responseTopic.c_str(), buffer);
+  Serial.printf("[THINGSBOARD RPC RESP] %s -> %s\n", responseTopic.c_str(), buffer);
 }
 
 // ============================================================================
@@ -425,24 +460,24 @@ void setup() {
   Serial.begin(115200);
   delay(1000);
   Serial.println("\n============================================================");
-  Serial.println("  ESP32 SMART HOME AUTOMATION — THINGSBOARD HARDWARE FIRMWARE ");
+  Serial.println("  ESP32 SMART HOME AUTOMATION — ALL-IN-ONE FIRMWARE         ");
   Serial.println("============================================================");
   Serial.printf("Device ID: %s\n", TB_DEVICE_ID);
   Serial.printf("Server:    %s:%d\n", TB_SERVER, TB_PORT);
   Serial.printf("Wi-Fi:     %s\n", WIFI_SSID);
 
-  // 1. Mandatory Safe Boot: Set all GPIOs to LOW (0V)
+  // 1. Mandatory Safe Boot: Drive all GPIO pins LOW (0V)
   initHardwarePins();
 
   // 2. Wi-Fi Initialization
   setupWiFi();
 
-  // 3. MQTT Client Setup
+  // 3. MQTT Client Configuration
   client.setServer(TB_SERVER, TB_PORT);
   client.setCallback(onMqttMessage);
   client.setBufferSize(512);
 
-  // 4. Initial Connection
+  // 4. Connect to ThingsBoard
   reconnectThingsBoard();
 }
 
@@ -450,7 +485,7 @@ void loop() {
   // Non-blocking Wi-Fi monitor
   checkWiFi();
 
-  // Non-blocking MQTT monitor
+  // Non-blocking MQTT session monitor
   if (WiFi.status() == WL_CONNECTED) {
     if (!client.connected()) {
       reconnectThingsBoard();
